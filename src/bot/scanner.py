@@ -274,6 +274,7 @@ class Scanner:
         return limit_price, real_edge, go_aggressive
 
     def _prompt_and_execute(self, opp, opportunity_id: int):
+        days = None
         try:
             yes_bid, yes_ask, days = self._markets.get_bid_ask(opp.ticker)
             limit_price, real_edge, is_aggressive = self._compute_order_price(opp, yes_bid, yes_ask, days)
@@ -286,6 +287,8 @@ class Scanner:
 
         sep = "─" * 60
         print(f"\n{sep}")
+        if days is not None and days <= 0:
+            print(f"  WARNING: Market may already be closed (days_to_resolution={days:.2f})")
         print(f"  OPPORTUNITY: {opp.ticker}")
         print(f"  Direction  : {opp.direction.upper()}")
         print(f"  Claude p   : {opp.claude_probability * 100:.0f}%  vs  scan mid={opp.market_price * 100:.0f}%")
@@ -321,6 +324,10 @@ class Scanner:
             self._logger.error("Could not fetch live prices for %s: %s", opp.ticker, e)
             return
 
+        if days <= 0:
+            self._logger.warning("Skipping %s — market already closed (days=%.2f)", opp.ticker, days)
+            return
+
         if real_edge < settings.min_edge_to_execute:
             self._logger.info(
                 "Spread killed edge on %s %s: limit=%.2f real_edge=%.1f%% (need %.1f%%)",
@@ -332,6 +339,7 @@ class Scanner:
         self._execute(opp, opportunity_id, limit_price, real_edge)
 
     def _execute(self, opp, opportunity_id: int, limit_price: float, real_edge: float):
+        from src.kalshi.client import KalshiAPIError
         try:
             contracts = max(1, int(opp.kelly_result.bet_dollars / limit_price))
             price_cents = round(limit_price * 100)
@@ -341,5 +349,13 @@ class Scanner:
                 "TRADE: %s %s x%d @ $%.2f real_edge=%.1f%% trade_id=%d",
                 opp.ticker, opp.direction.upper(), contracts, limit_price, real_edge * 100, trade_id,
             )
+            print(f"  Order placed: {contracts} contract(s) @ ${limit_price:.2f}\n")
+        except KalshiAPIError as e:
+            if e.status_code == 409 and "market_closed" in str(e):
+                self._logger.warning("Market closed before order could be placed: %s", opp.ticker)
+                print("  Skipped — market closed before order landed.\n")
+            else:
+                self._logger.error("Order placement failed for %s: %s", opp.ticker, e)
+                print(f"  Order failed: {e}\n")
         except Exception as e:
             self._logger.error("Order placement failed for %s: %s", opp.ticker, e)
