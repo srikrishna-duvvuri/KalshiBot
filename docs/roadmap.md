@@ -74,19 +74,26 @@ hygiene, not strategy. The edge source needs to change, not the polling interval
 
 ## 3. Priority backlog (engineering — pre-existing gaps)
 
-These are the items the audit surfaced that are **not** part of the current
-strategic pivot but should be scheduled before going live.
+Status tags: **[shipped]** = done on this branch. **[open]** = not yet done.
 
-1. **Wire `get_correction_factor()`** into `ClaudeAnalyzer._build_opportunity()`.
-   One-liner; reduces systematic overconfidence.
-2. **Build a backtest harness.** Log flagged markets to a paper-trade table; resolve
-   them against Kalshi's settled outcomes. This is the single highest-leverage change
-   for validating any strategy.
-3. **Model bid-ask spread in Kelly sizing**, not just in order placement. Use
-   `get_bid_ask()` to compute the real fill price before sizing.
-4. **Correct the fee model** or keep it as an intentional safety margin. If keeping,
-   document as such in `CLAUDE.md`.
-5. **Fix `executor.py` DRY issue** — import `_parse_price` instead of re-implementing.
+1. **[open] Wire `get_correction_factor()`** into `ClaudeAnalyzer._build_opportunity()`.
+   One-liner; reduces systematic overconfidence. `CalibrationTracker` is instantiated
+   in `scanner.py:46` but never called during analysis.
+2. **[shipped] Backtest harness.** `src/backtest/simulator.py` + `scripts/backtest.py`.
+   Retrospective replay of every settled opportunity, filtered by min-edge and
+   confidence floor, reports gross/net P&L, win rate, ROI on staked, Brier score,
+   and breakouts by confidence and edge bucket. No paper-trade table needed —
+   the existing `opportunities` ⋈ `calibration` join provides the data once
+   markets are settled via `scripts/settle.py`. See §6 for usage.
+3. **[open] Model bid-ask spread in Kelly sizing**, not just in order placement.
+   Use `get_bid_ask()` to compute the real fill price before sizing. The backtest
+   simulator currently fills at mid — this over-estimates P&L by roughly the
+   average spread (2–4% on typical contracts).
+4. **[open] Correct the fee model** or keep it as an intentional safety margin.
+   Current flat 7% × payout overestimates at price extremes; Kalshi's actual fee
+   is ~7% × price × (1−price) × contracts. If keeping flat, document in `CLAUDE.md`.
+5. **[open] Fix `executor.py` DRY issue** — import `_parse_price` instead of
+   re-implementing.
 
 ---
 
@@ -140,10 +147,59 @@ divergence injected into `MarketContext.cross_market_prices` and rendered in
 
 ---
 
-## 5. Out of scope for this branch
+## 5. Still out of scope for this branch
 
-- Backtest harness (tracked in §3).
-- Calibration wiring (tracked in §3).
-- Spread-aware Kelly sizing (tracked in §3).
+- Calibration wiring (tracked in §3, open).
+- Spread-aware Kelly sizing (tracked in §3, open).
+- Fee-curve correction (tracked in §3, open).
 - Twitter/X integration (§4.3).
 - Pre-committed scheduled-event templates (§4.3).
+
+---
+
+## 6. Using the backtest harness
+
+The harness replays every opportunity that has a settled calibration row.
+It does not modify the ledger; it reads and simulates.
+
+```bash
+# All-time, default filters (min_edge = 0.05, accept all confidences)
+python scripts/backtest.py
+
+# Last 30 days only
+python scripts/backtest.py --days 30
+
+# Only trades where Claude was at least medium-confidence
+python scripts/backtest.py --min-confidence medium
+
+# Only high-edge opportunities
+python scripts/backtest.py --min-edge 0.10
+
+# Model the Kalshi-mid-price fee (≈ 0.07 × 0.5 × 0.5 ≈ 0.02)
+python scripts/backtest.py --fee-rate 0.02
+```
+
+### How to interpret the output
+
+- **ROI on staked** is the one number that matters. If it's negative across a
+  reasonable sample (≥ 50 settled opportunities), the current strategy is
+  losing money even before real-world spread is accounted for.
+- **Brier score** reports Claude's calibration across *all* predictions, not
+  just filtered trades. Below 0.20 is good; above 0.25 is worse than a coin flip.
+- **By-confidence** breakdown tells you whether Claude's `high` predictions
+  earn their keep. If `high` and `medium` both lose, the confidence signal is
+  noise.
+- **By-edge bucket** tells you where in the edge distribution the P&L lives.
+  If only the 20%+ bucket is profitable, the bot is earning on outliers and
+  `min_edge_to_execute` should be raised.
+
+### Known optimistic biases in the output
+
+1. **Fills at mid.** Real execution pays the ask. Expect 2–4% less P&L per
+   round-trip in live trading than the backtest reports.
+2. **No rejected orders or market-closed events.** Every opportunity becomes
+   a trade in the sim.
+3. **Fee model is flat 7%.** Kalshi's real fee is price-dependent and smaller
+   at extremes — use `--fee-rate` to experiment with alternate assumptions.
+
+Treat simulated net P&L as an **upper bound**, not a forecast.

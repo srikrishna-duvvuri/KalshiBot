@@ -69,8 +69,18 @@ class Settings:
     )
 
     # Cross-market arbitrage
-    # Map Kalshi tickers → Polymarket slugs for markets resolving on the same event.
-    # Curated manually — verify resolution criteria match before adding.
+    # Kalshi ticker → Polymarket slug. This is a MANUAL WHITELIST — empty by default.
+    # Do not auto-match by title or keyword: two contracts can sound identical but
+    # resolve on different criteria (different cutoff dates, different sources of
+    # truth, different tiebreakers). A wrong mapping feeds Claude a spurious price
+    # gap and produces garbage signals. Add entries only after reading both
+    # resolution rules end-to-end.
+    #
+    # Example (replace with verified pairs before enabling):
+    #   polymarket_mappings = {
+    #       "FED-CUT-JUN26": "will-the-fed-cut-rates-in-june-2026",
+    #       "PRES-2028-GOP-NOM": "republican-nominee-2028",
+    #   }
     polymarket_mappings: dict = field(default_factory=dict)
     polymarket_divergence_threshold: float = 0.05   # ≥ 5 pp gap → flag to Claude
     polymarket_cache_seconds: int = 60              # cache fetches this long
