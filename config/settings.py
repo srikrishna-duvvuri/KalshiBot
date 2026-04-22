@@ -52,6 +52,29 @@ class Settings:
     aggressive_spread_threshold: float = 0.02   # ≤ 2¢ spread → just cross it
     aggressive_within_days: float = 1.0         # < 1 day to close → can't wait for passive fill
 
+    # Scheduled-event watchlist
+    # Tickers matching these prefixes bypass the volume filter and are analyzed every
+    # cycle regardless of movement (cooldown still applies). Use for Fed decisions,
+    # economic releases, SCOTUS, scheduled elections — events where release timing
+    # is known in advance and Claude's reasoning has room to breathe.
+    watchlist_ticker_prefixes: tuple = (
+        "FED-",        # Federal Reserve rate decisions
+        "FEDFUNDS-",   # Fed funds target
+        "CPI-",        # Consumer Price Index
+        "JOBS-",       # Non-farm payrolls
+        "GDP-",        # GDP releases
+        "SCOTUS-",     # Supreme Court opinions
+        "ELECTION-",   # Scheduled elections
+        "PRES-",       # Presidential
+    )
+
+    # Cross-market arbitrage
+    # Map Kalshi tickers → Polymarket slugs for markets resolving on the same event.
+    # Curated manually — verify resolution criteria match before adding.
+    polymarket_mappings: dict = field(default_factory=dict)
+    polymarket_divergence_threshold: float = 0.05   # ≥ 5 pp gap → flag to Claude
+    polymarket_cache_seconds: int = 60              # cache fetches this long
+
     # Fees (verify current schedule at kalshi.com)
     kalshi_fee_rate: float = 0.07
 

@@ -49,6 +49,10 @@ class MarketContext:
     volume: float
     days_to_resolution: float
     news_items: list
+    # Optional cross-venue price for the same underlying event (e.g. Polymarket YES).
+    # Set by the scanner when a mapping exists in settings.polymarket_mappings.
+    cross_market_yes: float | None = None
+    cross_market_venue: str | None = None
 
 
 def build_analysis_prompt(markets: list[MarketContext]) -> str:
@@ -66,6 +70,17 @@ def build_analysis_prompt(markets: list[MarketContext]) -> str:
         else:
             news_text = "\n  Relevant news: None found"
 
+        if m.cross_market_yes is not None and m.cross_market_venue:
+            delta_pp = (m.cross_market_yes - m.market_price) * 100
+            cross_text = (
+                f"\n  Cross-venue price ({m.cross_market_venue}): "
+                f"{m.cross_market_yes:.2f} ({m.cross_market_yes * 100:.0f}%) "
+                f"Δ={delta_pp:+.0f}pp vs Kalshi — "
+                f"confirm these contracts resolve on the SAME event before trusting the gap"
+            )
+        else:
+            cross_text = ""
+
         parts.append(
             f"\n--- Market {i} ---\n"
             f"Ticker: {m.ticker}\n"
@@ -74,6 +89,7 @@ def build_analysis_prompt(markets: list[MarketContext]) -> str:
             f"Current market price (Yes): {m.market_price:.2f} ({m.market_price * 100:.0f}%)\n"
             f"Days to resolution: {m.days_to_resolution:.1f}\n"
             f"Volume: ${m.volume:,.0f}"
+            f"{cross_text}"
             f"{news_text}"
         )
 

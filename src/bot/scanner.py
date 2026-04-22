@@ -6,7 +6,8 @@ from pathlib import Path
 
 from config.settings import settings
 from src.kalshi.client import KalshiClient
-from src.kalshi.markets import KalshiMarkets
+from src.kalshi.markets import KalshiMarkets, is_watchlisted
+from src.signals.crossmarket import CrossMarketSignal
 from src.signals.movement import MovementDetector
 from src.signals.news import NewsFetcher
 from src.claude.analyzer import ClaudeAnalyzer
@@ -40,6 +41,7 @@ class Scanner:
 
         self._movement = MovementDetector()
         self._news = NewsFetcher()
+        self._crossmarket = CrossMarketSignal()
         self._analyzer = ClaudeAnalyzer(self._bankroll)
         self._ledger = Ledger(settings.db_path)
         self._calibration = CalibrationTracker(settings.db_path)
@@ -165,6 +167,23 @@ class Scanner:
             self._movement.update_market(m)
 
         flagged = self._movement.get_flagged_markets(all_markets)
+
+        # Always-flag watchlisted scheduled-event markets (cooldown still respected).
+        # These are analyzed every cycle regardless of movement — release timing is
+        # known and the edge comes from reasoning, not reacting to price drift.
+        flagged_tickers = {m.get("ticker") for m in flagged}
+        for m in all_markets:
+            ticker = m.get("ticker", "")
+            if not is_watchlisted(ticker):
+                continue
+            if ticker in flagged_tickers:
+                continue
+            if self._movement.is_in_cooldown(ticker):
+                continue
+            self._logger.info("Watchlist flag: %s (scheduled-event bypass)", ticker)
+            flagged.append(m)
+            flagged_tickers.add(ticker)
+
         if not flagged:
             self._logger.info("No flagged markets (tracking %d total)", self._movement.market_count())
             return
@@ -238,9 +257,21 @@ class Scanner:
         volume = float(market.get("_volume_dollars", 0))
         days = float(market.get("_days_to_resolution", 30))
         news = self._news.get_relevant_news(title, max_items=4)
+
+        cross_yes = None
+        cross_venue = None
+        try:
+            cross = self._crossmarket.check(ticker, price)
+            if cross is not None:
+                cross_yes = cross.polymarket_yes
+                cross_venue = "Polymarket"
+        except Exception as e:
+            self._logger.debug("Cross-market check failed for %s: %s", ticker, e)
+
         return MarketContext(
             ticker=ticker, title=title, resolution_criteria=resolution,
             market_price=price, volume=volume, days_to_resolution=days, news_items=news,
+            cross_market_yes=cross_yes, cross_market_venue=cross_venue,
         )
 
     def _compute_order_price(self, opp, yes_bid: float, yes_ask: float, days: float) -> tuple[float, float, bool]:

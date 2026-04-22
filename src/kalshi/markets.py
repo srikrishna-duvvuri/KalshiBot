@@ -23,6 +23,13 @@ def _days_to_resolution(close_time_str: str) -> float:
         return 30.0
 
 
+def is_watchlisted(ticker: str) -> bool:
+    """True if ticker matches a scheduled-event prefix in settings.watchlist_ticker_prefixes."""
+    if not ticker:
+        return False
+    return any(ticker.startswith(p) for p in settings.watchlist_ticker_prefixes)
+
+
 class KalshiMarkets:
     def __init__(self, client: KalshiClient):
         self._client = client
@@ -48,8 +55,11 @@ class KalshiMarkets:
                     yes_bid = _parse_price(m.get("yes_bid") or m.get("last_price") or 0.5)
                     volume = float(m.get("volume", 0) or 0)
                     days = _days_to_resolution(m.get("close_time", ""))
+                    watchlisted = is_watchlisted(m.get("ticker", ""))
 
-                    if volume < settings.min_market_volume:
+                    # Watchlisted tickers bypass the volume filter — pre-release
+                    # scheduled markets may be thin until the event approaches.
+                    if not watchlisted and volume < settings.min_market_volume:
                         continue
                     if not (settings.min_market_price <= yes_bid <= settings.max_market_price):
                         continue
@@ -59,6 +69,7 @@ class KalshiMarkets:
                     m["_yes_bid_normalized"] = yes_bid
                     m["_volume_dollars"] = volume
                     m["_days_to_resolution"] = days
+                    m["_watchlisted"] = watchlisted
                     markets.append(m)
                 except Exception as e:
                     logger.debug("Skipping market %s: %s", m.get("ticker", "?"), e)

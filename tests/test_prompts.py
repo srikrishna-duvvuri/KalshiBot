@@ -88,3 +88,19 @@ class TestBuildAnalysisPrompt:
         ctx = _make_context()
         prompt = build_analysis_prompt([ctx])
         assert "50,000" in prompt or "50000" in prompt
+
+    def test_prompt_includes_cross_market_when_provided(self):
+        ctx = _make_context(price=0.40)
+        ctx.cross_market_yes = 0.60
+        ctx.cross_market_venue = "Polymarket"
+        prompt = build_analysis_prompt([ctx])
+        assert "Polymarket" in prompt
+        assert "60%" in prompt
+        # 20 pp gap should render as +20pp
+        assert "+20pp" in prompt
+
+    def test_prompt_omits_cross_market_when_absent(self):
+        ctx = _make_context()
+        prompt = build_analysis_prompt([ctx])
+        assert "Polymarket" not in prompt
+        assert "Cross-venue" not in prompt
